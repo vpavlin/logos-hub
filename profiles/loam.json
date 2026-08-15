@@ -1,0 +1,7 @@
+{
+  "name": "loam",
+  "description": "Loam shared node only: loam_core -> delivery_module. Drive with `call loam loam_core start '<cfg>'`",
+  "modulesDir": "/home/vpavlin/loam-hub-test/modules",
+  "load": ["loam_core"],
+  "env": { "QT_QPA_PLATFORM": "offscreen", "EMIT_FROM_THREAD": "1" }
+}

@@ -1,0 +1,14 @@
+{
+  "name": "kym",
+  "description": "KYM household hub: kym_core -> loam_core -> delivery_module (released tooling)",
+  "modulesDir": "/home/vpavlin/loam-hub-test/modules",
+  "load": ["kym_core"],
+  "env": {
+    "KYM_HUB": "1",
+    "KYM_USE_CHANNELS": "1",
+    "QT_QPA_PLATFORM": "offscreen",
+    "EMIT_FROM_THREAD": "1",
+    "KYM_CORE_DATA": "{data}",
+    "KYM_DEVICE_ID": "logos-hub-kym"
+  }
+}

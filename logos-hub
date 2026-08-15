@@ -1,0 +1,147 @@
+#!/usr/bin/env python3
+"""logos-hub — run a set of logos-core modules headless and drive them from a generated CLI.
+
+A thin wrapper over `logoscore` (the daemon/client runtime): it adds *profiles* (a declarative
+set of modules + env + module dir to bring up together, in an isolated config dir) and a nicer
+UX (auto load-module, per-module `describe` from the module's own API, pretty JSON, watch).
+
+Nothing here is app-specific — it drives ANY logos-core module (kym_core, qaku_core, scala,
+loam_core, delivery_module, ...). Loam apps are just some of the tenants.
+
+Config dir per profile keeps hubs isolated (so one doesn't read another's registry). The real
+work — load-module / call / module-info / watch — is logoscore's; this makes it ergonomic.
+"""
+import argparse, json, os, subprocess, sys, time
+from pathlib import Path
+
+LOGOSCORE = os.environ.get("LOGOSCORE", str(Path.home() / "logoscore-new/result/bin/logoscore"))
+STATE = Path(os.environ.get("LOGOS_HUB_STATE", Path.home() / ".logos-hub"))
+PROFILE_DIRS = [Path(__file__).resolve().parent / "profiles", STATE / "profiles"]
+
+def die(msg, code=1):
+    print(f"logos-hub: {msg}", file=sys.stderr); sys.exit(code)
+
+def find_profile(name):
+    for d in PROFILE_DIRS:
+        p = d / f"{name}.json"
+        if p.exists():
+            prof = json.loads(p.read_text()); prof.setdefault("name", name); return prof
+    die(f"profile '{name}' not found (looked in: {', '.join(str(d) for d in PROFILE_DIRS)})")
+
+def paths(prof):
+    base = STATE / "run" / prof["name"]
+    return {"cfg": base / "cfg", "data": base / "data", "log": base / "daemon.log"}
+
+def lc_env(prof):
+    p = paths(prof)
+    e = dict(os.environ)
+    e["LOGOSCORE_CONFIG_DIR"] = str(p["cfg"])
+    e.update({k: str(v) for k, v in prof.get("env", {}).items()})
+    # per-module KYM_CORE_DATA etc. can be templated with {data}
+    for k, v in list(e.items()):
+        if isinstance(v, str) and "{data}" in v:
+            e[k] = v.replace("{data}", str(p["data"]))
+    return e
+
+def lc(prof, *args, capture=True, check=False, env_extra=None):
+    e = lc_env(prof)
+    if env_extra: e.update({k: str(v) for k, v in env_extra.items()})
+    r = subprocess.run([LOGOSCORE, *args], env=e,
+                       capture_output=capture, text=True)
+    if check and r.returncode != 0:
+        die(f"logoscore {' '.join(args)} failed (rc={r.returncode}): {(r.stderr or r.stdout).strip()}")
+    return r
+
+def jprint(s):
+    s = (s or "").strip()
+    try:
+        obj = json.loads(s)
+        # unwrap a {"result":"<json-string>"} envelope one level for readability
+        if isinstance(obj, dict) and isinstance(obj.get("result"), str):
+            try: obj["result"] = json.loads(obj["result"])
+            except Exception: pass
+        print(json.dumps(obj, indent=2, sort_keys=True))
+    except Exception:
+        print(s)
+
+# ---- commands ----
+def cmd_up(prof, args):
+    p = paths(prof); p["data"].mkdir(parents=True, exist_ok=True); p["cfg"].mkdir(parents=True, exist_ok=True)
+    mdir = prof.get("modulesDir") or die("profile missing 'modulesDir'")
+    lc(prof, "stop", capture=True)  # clear any stale daemon for this profile
+    time.sleep(1)
+    print(f"[up] starting daemon for '{prof['name']}' (modules: {mdir})")
+    # daemon must run detached; its modules inherit lc_env(prof)
+    e = lc_env(prof)
+    with open(p["log"], "w") as logf:
+        subprocess.Popen([LOGOSCORE, "-D", "-m", mdir], env=e, stdout=logf, stderr=subprocess.STDOUT)
+    for _ in range(25):
+        if lc(prof, "status").returncode == 0: break
+        time.sleep(1)
+    else:
+        die("daemon did not come up; see " + str(p["log"]))
+    for m in prof.get("load", []):
+        r = lc(prof, "load-module", m)
+        ok = r.returncode == 0
+        print(f"[up] load {m}: {'ok' if ok else 'FAILED'} {r.stdout.strip() or r.stderr.strip()}")
+    print(f"[up] '{prof['name']}' ready. `logos-hub ls {prof['name']}` / `describe` / `call` / `watch`.")
+
+def cmd_down(prof, args):
+    lc(prof, "stop"); print(f"[down] stopped '{prof['name']}'")
+
+def cmd_status(prof, args): jprint(lc(prof, "status", "--json").stdout)
+def cmd_ls(prof, args):     jprint(lc(prof, "list-modules", "--json").stdout)
+def cmd_logs(prof, args):
+    p = paths(prof); print(p["log"].read_text()[-4000:] if p["log"].exists() else "(no log yet)")
+
+def cmd_describe(prof, args):
+    # the "generated CLI": surface a module's own API from logoscore module-info
+    r = lc(prof, "module-info", args.module, "--json")
+    jprint(r.stdout or r.stderr)
+
+def cmd_call(prof, args):
+    # forward to logoscore call: <module> <method> [args...]. Args are passed as-is
+    # (logoscore's call takes typed positionals); JSON args should be single-quoted at the shell.
+    r = lc(prof, "call", args.module, args.method, *args.args)
+    jprint(r.stdout or r.stderr)
+
+def cmd_watch(prof, args):
+    # stream events — inherit stdio so it's live
+    e = lc_env(prof)
+    subprocess.run([LOGOSCORE, "watch", args.module], env=e)
+
+def cmd_profiles(_prof, _args):
+    seen = set()
+    for d in PROFILE_DIRS:
+        if d.exists():
+            for f in sorted(d.glob("*.json")):
+                if f.stem not in seen:
+                    seen.add(f.stem)
+                    try: desc = json.loads(f.read_text()).get("description", "")
+                    except Exception: desc = ""
+                    print(f"  {f.stem:16} {desc}")
+    if not seen: print("  (no profiles; add one under ./profiles or ~/.logos-hub/profiles)")
+
+def main():
+    ap = argparse.ArgumentParser(prog="logos-hub", description=__doc__.splitlines()[0])
+    sub = ap.add_subparsers(dest="cmd", required=True)
+    def prof_arg(sp): sp.add_argument("profile", help="profile name (see `logos-hub profiles`)")
+    for name, help in [("up","start the daemon + load the profile's modules"),
+                       ("down","stop the profile's daemon"),
+                       ("status","daemon + module health"),
+                       ("ls","list loaded/available modules"),
+                       ("logs","tail the daemon log")]:
+        sp = sub.add_parser(name, help=help); prof_arg(sp)
+    sp = sub.add_parser("describe", help="show a module's API (methods) from module-info"); prof_arg(sp); sp.add_argument("module")
+    sp = sub.add_parser("call", help="call a module method"); prof_arg(sp); sp.add_argument("module"); sp.add_argument("method"); sp.add_argument("args", nargs="*")
+    sp = sub.add_parser("watch", help="stream a module's events"); prof_arg(sp); sp.add_argument("module")
+    sub.add_parser("profiles", help="list available profiles")
+    a = ap.parse_args()
+
+    if a.cmd == "profiles": return cmd_profiles(None, a)
+    prof = find_profile(a.profile)
+    {"up":cmd_up,"down":cmd_down,"status":cmd_status,"ls":cmd_ls,"logs":cmd_logs,
+     "describe":cmd_describe,"call":cmd_call,"watch":cmd_watch}[a.cmd](prof, a)
+
+if __name__ == "__main__":
+    main()
