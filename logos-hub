@@ -110,6 +110,29 @@ def cmd_watch(prof, args):
     e = lc_env(prof)
     subprocess.run([LOGOSCORE, "watch", args.module], env=e)
 
+def cmd_telemetry(prof, args):
+    # Capture loam-telemetry: subscribe the telemetry topic on a delivery-capable module, then pipe its
+    # event stream into loam-telemetry-exporter.mjs, which decodes (with the pre-shared secret) and serves
+    # Prometheus /metrics. Prometheus scrapes :port/metrics → Grafana compares Android/Basecamp nodes.
+    secret = args.secret or os.environ.get("TELEMETRY_SECRET") or die("--secret (or TELEMETRY_SECRET env) required")
+    exporter = args.exporter or os.environ.get("LOAM_TELEMETRY_EXPORTER") or die("--exporter <path to loam-telemetry-exporter.mjs> (or LOAM_TELEMETRY_EXPORTER env) required")
+    node = os.environ.get("NODE", "node")
+    exp_env = {**os.environ, "TELEMETRY_SECRET": secret}
+    topic = subprocess.run([node, exporter, "--topic"], env=exp_env, capture_output=True, text=True).stdout.strip()
+    if not topic.startswith("/loam-telemetry/"):
+        die("could not derive the telemetry topic — is node + @noble reachable? (run the exporter from an app dir, or set NODE)")
+    print(f"[telemetry] topic {topic}")
+    r = lc(prof, "call", args.module, args.subscribe, topic)
+    print(f"[telemetry] {args.module}.{args.subscribe}(topic): {'ok' if r.returncode==0 else 'FAILED ' + (r.stderr or r.stdout).strip()}")
+    watch = subprocess.Popen([LOGOSCORE, "watch", args.module], env=lc_env(prof), stdout=subprocess.PIPE)
+    exp = subprocess.Popen([node, exporter, f"--port={args.port}"], env=exp_env, stdin=watch.stdout)
+    print(f"[telemetry] exporter on :{args.port}/metrics — scrape it from Prometheus. Ctrl-C to stop.")
+    try: exp.wait()
+    finally:
+        for p in (watch, exp):
+            try: p.terminate()
+            except Exception: pass
+
 def cmd_profiles(_prof, _args):
     seen = set()
     for d in PROFILE_DIRS:
@@ -135,13 +158,19 @@ def main():
     sp = sub.add_parser("describe", help="show a module's API (methods) from module-info"); prof_arg(sp); sp.add_argument("module")
     sp = sub.add_parser("call", help="call a module method"); prof_arg(sp); sp.add_argument("module"); sp.add_argument("method"); sp.add_argument("args", nargs="*")
     sp = sub.add_parser("watch", help="stream a module's events"); prof_arg(sp); sp.add_argument("module")
+    sp = sub.add_parser("telemetry", help="subscribe the telemetry topic → serve Prometheus /metrics"); prof_arg(sp)
+    sp.add_argument("--secret", help="pre-shared loam-telemetry secret (or TELEMETRY_SECRET env)")
+    sp.add_argument("--exporter", help="path to loam-telemetry-exporter.mjs (or LOAM_TELEMETRY_EXPORTER env)")
+    sp.add_argument("--module", default="loam_core", help="delivery-capable module that receives telemetry (default: loam_core)")
+    sp.add_argument("--subscribe", default="join", help="subscribe method on the module (loam_core: join; delivery_module: subscribe)")
+    sp.add_argument("--port", type=int, default=9109, help="Prometheus /metrics port (default 9109)")
     sub.add_parser("profiles", help="list available profiles")
     a = ap.parse_args()
 
     if a.cmd == "profiles": return cmd_profiles(None, a)
     prof = find_profile(a.profile)
     {"up":cmd_up,"down":cmd_down,"status":cmd_status,"ls":cmd_ls,"logs":cmd_logs,
-     "describe":cmd_describe,"call":cmd_call,"watch":cmd_watch}[a.cmd](prof, a)
+     "describe":cmd_describe,"call":cmd_call,"watch":cmd_watch,"telemetry":cmd_telemetry}[a.cmd](prof, a)
 
 if __name__ == "__main__":
     main()
