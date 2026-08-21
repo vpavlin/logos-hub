@@ -1,0 +1,339 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="logos-hub — run Logos core modules headless with a reflective typed CLI, bash completion, and an MCP bridge.">
+<title>logos-hub</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600;700&display=swap">
+<style>
+  :root{
+    --bg:#f4f6f8; --surface:#ffffff; --surface-2:#eef1f5; --ink:#171c24; --ink-soft:#57616f;
+    --border:#e0e5ec; --accent:#0c7d8c; --accent-soft:#0c7d8c1a; --amber:#b4690e;
+    --term-bg:#12161d; --term-ink:#d6dde6; --term-dim:#8b95a3; --term-green:#5bc9a6;
+    --term-cyan:#4bc2d4; --term-amber:#e0a458; --shadow:0 1px 2px rgba(16,22,30,.06),0 8px 24px rgba(16,22,30,.05);
+  }
+  @media (prefers-color-scheme:dark){:root:not([data-theme=light]){
+    --bg:#0d1014; --surface:#151a21; --surface-2:#1b212a; --ink:#e6ebf1; --ink-soft:#9aa4b2;
+    --border:#252c36; --accent:#3ec6d6; --accent-soft:#3ec6d61f; --amber:#e0a458;
+    --term-bg:#0a0d12; --term-ink:#d6dde6; --term-dim:#7a8494; --term-green:#5bc9a6;
+    --term-cyan:#4bc2d4; --term-amber:#e0a458; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 30px rgba(0,0,0,.35);
+  }}
+  :root[data-theme=dark]{
+    --bg:#0d1014; --surface:#151a21; --surface-2:#1b212a; --ink:#e6ebf1; --ink-soft:#9aa4b2;
+    --border:#252c36; --accent:#3ec6d6; --accent-soft:#3ec6d61f; --amber:#e0a458;
+    --term-bg:#0a0d12; --term-ink:#d6dde6; --term-dim:#7a8494;
+    --term-green:#5bc9a6; --term-cyan:#4bc2d4; --term-amber:#e0a458; --shadow:0 1px 2px rgba(0,0,0,.4),0 8px 30px rgba(0,0,0,.35);
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{margin:0;background:var(--bg);color:var(--ink);
+    font:16px/1.65 "IBM Plex Sans",system-ui,-apple-system,sans-serif;
+    -webkit-font-smoothing:antialiased}
+  code,kbd,pre,.mono{font-family:"IBM Plex Mono",ui-monospace,Menlo,monospace}
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+
+  /* top bar */
+  header.top{position:sticky;top:0;z-index:20;background:color-mix(in srgb,var(--bg) 88%,transparent);
+    backdrop-filter:blur(10px);border-bottom:1px solid var(--border)}
+  .top-in{max-width:1180px;margin:0 auto;padding:14px 24px;display:flex;align-items:center;gap:14px}
+  .brand{font-family:"IBM Plex Mono";font-weight:600;font-size:18px;letter-spacing:-.01em;color:var(--ink)}
+  .brand .pr{color:var(--accent)}
+  .brand .cur{color:var(--accent);animation:blink 1.2s steps(1) infinite}
+  @keyframes blink{50%{opacity:0}}
+  @media (prefers-reduced-motion:reduce){.brand .cur{animation:none}}
+  .top .spacer{flex:1}
+  .top a.gh{color:var(--ink-soft);font-size:14px;font-weight:500}
+  .themebtn{background:var(--surface-2);border:1px solid var(--border);color:var(--ink-soft);
+    border-radius:8px;width:34px;height:34px;cursor:pointer;font-size:15px;line-height:1}
+  .themebtn:hover{color:var(--ink);border-color:var(--accent)}
+
+  /* layout */
+  .wrap{max-width:1180px;margin:0 auto;padding:0 24px;display:grid;
+    grid-template-columns:214px minmax(0,1fr);gap:44px}
+  nav.toc{position:sticky;top:64px;align-self:start;height:calc(100vh - 64px);overflow:auto;
+    padding:34px 0 40px;font-size:14px}
+  nav.toc .grp{color:var(--ink-soft);text-transform:uppercase;letter-spacing:.08em;font-size:11px;
+    font-weight:600;margin:20px 0 8px}
+  nav.toc a{display:block;color:var(--ink-soft);padding:5px 12px;border-left:2px solid transparent;
+    margin-left:-2px;border-radius:0 6px 6px 0}
+  nav.toc a:hover{color:var(--ink);background:var(--surface-2);text-decoration:none}
+  nav.toc a.on{color:var(--accent);border-left-color:var(--accent);background:var(--accent-soft);font-weight:500}
+  main{padding:34px 0 90px;min-width:0}
+
+  /* hero */
+  .hero{padding:26px 0 12px;border-bottom:1px solid var(--border);margin-bottom:8px}
+  .eyebrow{display:inline-flex;align-items:center;gap:7px;font-family:"IBM Plex Mono";font-size:12px;
+    font-weight:500;color:var(--accent);background:var(--accent-soft);padding:4px 11px;border-radius:999px;margin-bottom:18px}
+  .eyebrow .dot{width:6px;height:6px;border-radius:50%;background:var(--accent)}
+  h1{font-size:clamp(32px,5vw,46px);line-height:1.05;letter-spacing:-.025em;margin:0 0 14px;font-weight:700;text-wrap:balance}
+  .lede{font-size:19px;color:var(--ink-soft);max-width:60ch;margin:0 0 22px;text-wrap:pretty}
+  .lede b{color:var(--ink);font-weight:600}
+
+  section{padding-top:38px;margin-top:6px;scroll-margin-top:74px}
+  section>h2{font-size:25px;letter-spacing:-.02em;margin:0 0 6px;font-weight:600}
+  section>h2 .hash{color:var(--border);font-weight:400;margin-right:8px;font-family:"IBM Plex Mono"}
+  section p{color:var(--ink-soft);max-width:66ch;margin:12px 0}
+  section p b{color:var(--ink);font-weight:600}
+  h3{font-size:16px;margin:26px 0 4px;font-weight:600;letter-spacing:-.01em}
+
+  /* terminal blocks */
+  .term{background:var(--term-bg);border:1px solid var(--border);border-radius:12px;margin:16px 0;
+    overflow:hidden;box-shadow:var(--shadow)}
+  .term .bar{display:flex;align-items:center;gap:7px;padding:10px 14px;border-bottom:1px solid #ffffff12}
+  .term .bar i{width:11px;height:11px;border-radius:50%;background:#ffffff1f;display:block}
+  .term .bar i:nth-child(1){background:#e0645c}.term .bar i:nth-child(2){background:#e0a458}.term .bar i:nth-child(3){background:#5bc9a6}
+  .term .bar span{margin-left:8px;font-family:"IBM Plex Mono";font-size:11.5px;color:var(--term-dim)}
+  .term pre{margin:0;padding:16px 18px;overflow-x:auto;font-size:13.5px;line-height:1.7;color:var(--term-ink)}
+  .term pre .p{color:var(--term-cyan)}   /* prompt */
+  .term pre .c{color:var(--term-green)}  /* command name */
+  .term pre .f{color:var(--term-amber)}  /* flags */
+  .term pre .d{color:var(--term-dim)}    /* comments / output */
+  .term pre .s{color:#c99ad6}            /* strings */
+
+  code.inl{background:var(--surface-2);border:1px solid var(--border);border-radius:6px;
+    padding:1px 6px;font-size:.86em;color:var(--ink);white-space:nowrap}
+  .card{background:var(--surface);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin:16px 0;box-shadow:var(--shadow)}
+  .grid2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  @media (max-width:680px){.grid2{grid-template-columns:1fr}}
+  .feat h3{margin:0 0 4px;display:flex;align-items:center;gap:8px}
+  .feat h3 .ic{color:var(--accent)}
+  .feat p{margin:0;font-size:14.5px}
+  .note{border-left:3px solid var(--amber);background:color-mix(in srgb,var(--amber) 8%,transparent);
+    border-radius:0 10px 10px 0;padding:12px 16px;margin:18px 0;font-size:14.5px;color:var(--ink)}
+  .note b{color:var(--amber)}
+  ul.tight{margin:12px 0;padding-left:0;list-style:none}
+  ul.tight li{position:relative;padding:5px 0 5px 24px;color:var(--ink-soft);max-width:64ch}
+  ul.tight li::before{content:"▸";position:absolute;left:4px;color:var(--accent)}
+  ul.tight li b{color:var(--ink)}
+  .pill{display:inline-block;font-family:"IBM Plex Mono";font-size:11px;padding:2px 8px;border-radius:6px;
+    background:var(--accent-soft);color:var(--accent);font-weight:500;vertical-align:middle}
+  .steps{counter-reset:s;margin:14px 0;padding:0;list-style:none}
+  .steps li{counter-increment:s;position:relative;padding:8px 0 8px 38px;color:var(--ink-soft);border-top:1px solid var(--border)}
+  .steps li:first-child{border-top:0}
+  .steps li::before{content:counter(s);position:absolute;left:0;top:8px;width:24px;height:24px;
+    background:var(--accent);color:#fff;border-radius:7px;font-family:"IBM Plex Mono";font-size:12px;
+    font-weight:600;display:grid;place-items:center}
+  .steps li b{color:var(--ink)}
+  footer{border-top:1px solid var(--border);margin-top:60px;padding:26px 0;color:var(--ink-soft);font-size:13.5px}
+
+  @media (max-width:860px){
+    .wrap{grid-template-columns:1fr;gap:0}
+    nav.toc{display:none}
+  }
+</style>
+<script>(function(){try{var t=localStorage.getItem('lh-theme');if(t)document.documentElement.dataset.theme=t;}catch(e){}})();</script>
+</head>
+<body>
+<header class="top">
+  <div class="top-in">
+    <span class="brand">logos&#8209;hub<span class="cur">_</span></span>
+    <span class="spacer"></span>
+    <a class="gh" href="https://github.com/vpavlin/logos-hub">GitHub &#8599;</a>
+    <button class="themebtn" id="themebtn" title="Toggle theme" aria-label="Toggle theme">&#9681;</button>
+  </div>
+</header>
+
+<div class="wrap">
+  <nav class="toc" id="toc">
+    <div class="grp">Start</div>
+    <a href="#what">What it is</a>
+    <a href="#quickstart">Quickstart</a>
+    <a href="#profiles">Profiles</a>
+    <div class="grp">Drive it</div>
+    <a href="#cli">Typed CLI</a>
+    <a href="#completion">Completion</a>
+    <a href="#mcp">MCP bridge</a>
+    <div class="grp">Scale it</div>
+    <a href="#shared">Shared hub</a>
+    <a href="#config">Config</a>
+  </nav>
+
+  <main>
+    <div class="hero">
+      <span class="eyebrow"><span class="dot"></span>Logos tooling</span>
+      <h1>Run Logos core modules headless — and drive them like a real API.</h1>
+      <p class="lede"><b>logos-hub</b> is a thin, ergonomic wrapper over <code class="inl">logoscore</code>: bring a
+      declarative set of modules up together, then call them through a <b>typed CLI</b>, <b>bash completion</b>,
+      and an <b>MCP bridge</b> — all generated from each module&rsquo;s own live API. No app-specific code.</p>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i><span>bash</span></div>
+<pre><span class="p">$</span> <span class="c">logos-hub</span> up kym                              <span class="d"># daemon + kym_core (deps auto-resolve)</span>
+<span class="p">$</span> <span class="c">logos-hub</span> call kym kym_core createBudget <span class="f">--name</span> <span class="s">Groceries</span>
+<span class="p">$</span> <span class="c">logos-hub-mcp</span> kym                          <span class="d"># same API, now as MCP tools for an agent</span></pre>
+      </div>
+    </div>
+
+    <section id="what">
+      <h2><span class="hash">#</span>What it is</h2>
+      <p>Every Logos app has a headless <b>core module</b> (<code class="inl">kym_core</code>,
+      <code class="inl">qaku_core</code>, <code class="inl">scala</code>, <code class="inl">loam_core</code>,
+      <code class="inl">delivery_module</code>&hellip;). <code class="inl">logoscore</code> can load and call them, but
+      raw. logos-hub adds the layer that makes them <b>pleasant and repeatable to operate</b> — and it&rsquo;s
+      100% app-agnostic; apps are just tenants.</p>
+      <div class="grid2">
+        <div class="card feat"><h3><span class="ic">&#9640;</span> Profiles</h3><p>A declarative set of modules + env + module-dir, brought up together in an <b>isolated</b> config dir.</p></div>
+        <div class="card feat"><h3><span class="ic">&#8635;</span> One-command bring-up</h3><p><code class="inl">up</code> starts the daemon and loads the set; logoscore resolves each module&rsquo;s dependency chain.</p></div>
+        <div class="card feat"><h3><span class="ic">&#9906;</span> Reflective CLI</h3><p>Methods, parameters and types come from the module&rsquo;s own <code class="inl">module-info</code> — never hand-maintained.</p></div>
+        <div class="card feat"><h3><span class="ic">&#9670;</span> Agent-native</h3><p>The same reflection generates an MCP tool per method, so any agent drives it with typed tool-calls.</p></div>
+      </div>
+    </section>
+
+    <section id="quickstart">
+      <h2><span class="hash">#</span>Quickstart</h2>
+      <p>You need the <code class="inl">logoscore</code> binary and a modules dir (portable
+      <code class="inl">linux-amd64</code> bundles). Then:</p>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i><span>bash</span></div>
+<pre><span class="p">$</span> <span class="c">logos-hub</span> profiles                    <span class="d"># what can I bring up?</span>
+<span class="p">$</span> <span class="c">logos-hub</span> up kym                       <span class="d"># start daemon + load kym_core (+ loam_core, delivery)</span>
+<span class="p">$</span> <span class="c">logos-hub</span> ls kym                       <span class="d"># loaded / available modules</span>
+<span class="p">$</span> <span class="c">logos-hub</span> describe kym kym_core         <span class="d"># the module's typed API</span>
+<span class="p">$</span> <span class="c">logos-hub</span> call kym kym_core snapshot    <span class="d"># call a method &rarr; pretty JSON</span>
+<span class="p">$</span> <span class="c">logos-hub</span> watch kym kym_core           <span class="d"># stream its events</span>
+<span class="p">$</span> <span class="c">logos-hub</span> logs kym                     <span class="d"># tail the daemon log</span>
+<span class="p">$</span> <span class="c">logos-hub</span> down kym                     <span class="d"># stop</span></pre>
+      </div>
+    </section>
+
+    <section id="profiles">
+      <h2><span class="hash">#</span>Profiles</h2>
+      <p>A profile is a JSON file under <code class="inl">./profiles/</code> or
+      <code class="inl">~/.logos-hub/profiles/</code>:</p>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i><span>profiles/kym.json</span></div>
+<pre>{
+  <span class="s">"name"</span>: <span class="s">"kym"</span>,
+  <span class="s">"modulesDir"</span>: <span class="s">"/path/to/modules"</span>,
+  <span class="s">"load"</span>: [<span class="s">"kym_core"</span>],
+  <span class="s">"env"</span>: { <span class="s">"KYM_HUB"</span>: <span class="s">"1"</span>, <span class="s">"KYM_CORE_DATA"</span>: <span class="s">"{data}"</span> }
+}</pre>
+      </div>
+      <ul class="tight">
+        <li><b>modulesDir</b> — a logoscore modules dir (portable <code class="inl">linux-amd64</code> bundles).</li>
+        <li><b>load</b> — modules to load on <code class="inl">up</code>; dependencies auto-resolve.</li>
+        <li><b>env</b> — environment for the daemon&rsquo;s modules; <code class="inl">{data}</code> expands to the profile&rsquo;s data dir.</li>
+      </ul>
+    </section>
+
+    <section id="cli">
+      <h2><span class="hash">#</span>Typed CLI</h2>
+      <p><code class="inl">call</code> takes <b>named <code class="inl">--flags</code></b>, coerced to JSON per each
+      parameter&rsquo;s Qt type read live from <code class="inl">module-info</code>. No hand-written JSON — and a bad
+      flag is a <b>clear error, not a silent no-op</b>.</p>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i><span>bash</span></div>
+<pre><span class="p">$</span> <span class="c">logos-hub</span> describe kym kym_core
+  <span class="d">createBudget --name &lt;QString&gt;</span>
+  <span class="d">addAccount --name &lt;QString&gt; --type &lt;QString&gt; --balance &lt;QString&gt;</span>
+
+<span class="p">$</span> <span class="c">logos-hub</span> call kym kym_core addAccount <span class="f">--name</span> <span class="s">Checking</span> <span class="f">--type</span> <span class="s">asset</span> <span class="f">--balance</span> <span class="s">100</span>
+<span class="p">$</span> <span class="c">logos-hub</span> call kym kym_core createBudget <span class="f">--bogus</span> x
+<span class="d">logos-hub: kym_core.createBudget has no --bogus. Parameters: --name &lt;QString&gt;</span>
+
+<span class="p">$</span> <span class="c">logos-hub</span> call kym kym_core createBudget <span class="f">--name</span> <span class="s">X</span> <span class="f">--dry-run</span>   <span class="d"># show the JSON, don't invoke</span>
+<span class="p">$</span> <span class="c">logos-hub</span> describe kym kym_core <span class="f">--json</span>                        <span class="d"># full machine-readable schema</span></pre>
+      </div>
+      <p>A raw JSON positional (<code class="inl">call &hellip; createBudget '{"name":"X"}'</code>) still works. Because it
+      reflects <code class="inl">module-info</code> at runtime, adding a method to a core surfaces it automatically —
+      nothing in the CLI changes.</p>
+    </section>
+
+    <section id="completion">
+      <h2><span class="hash">#</span>Bash completion</h2>
+      <p>Dynamic completion walks the same reflection: subcommand &rarr; profile &rarr; module &rarr; method &rarr;
+      <code class="inl">--param</code> flags, live from the running daemon.</p>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i><span>bash</span></div>
+<pre><span class="p">$</span> source &lt;(<span class="c">logos-hub</span> completions)                                <span class="d"># this shell</span>
+<span class="p">$</span> <span class="c">logos-hub</span> completions | sudo tee /etc/bash_completion.d/logos-hub  <span class="d"># persistent</span></pre>
+      </div>
+    </section>
+
+    <section id="mcp">
+      <h2><span class="hash">#</span>MCP bridge <span class="pill">agents</span></h2>
+      <p><code class="inl">logos-hub-mcp &lt;profile&gt;</code> is an MCP server (JSON-RPC over stdio) that turns
+      <b>every invokable method into an MCP tool</b> — named <code class="inl">&lt;module&gt;__&lt;method&gt;</code>, with a
+      JSON-schema <code class="inl">inputSchema</code> derived from the Qt parameter types. Any MCP client — Claude,
+      an agent runtime — then drives kym/qaku/scala/loam with first-class <b>typed tool-calls</b>, no CLI
+      string-mangling.</p>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i><span>bash</span></div>
+<pre><span class="p">$</span> <span class="c">logos-hub</span> up kym          <span class="d"># bring the daemon up first</span>
+<span class="p">$</span> <span class="c">logos-hub-mcp</span> kym         <span class="d"># speaks MCP over stdio</span>
+<span class="d"># tools/list &rarr; kym_core__createBudget, qaku_core__addQuestion, &hellip; (generated live)</span></pre>
+      </div>
+      <p>MCP client config: command <code class="inl">logos-hub-mcp</code>, args <code class="inl">["kym"]</code>. The tool
+      list is generated from the loaded modules&rsquo; schema; add a method to a core and it appears on the next
+      <code class="inl">tools/list</code> — zero code change here.</p>
+    </section>
+
+    <section id="shared">
+      <h2><span class="hash">#</span>The shared multi-app hub</h2>
+      <p>A profile can load <b>several app cores into one daemon</b> — and because <code class="inl">logoscore</code>
+      loads each module as a <b>singleton by name</b>, they <b>share one <code class="inl">delivery_module</code> — one
+      Waku node</b>. That&rsquo;s the server-side mirror of the mobile Loam shared node: <b>N per-app hubs collapse to
+      one</b>, saving relay, discovery and store overhead.</p>
+      <div class="term">
+        <div class="bar"><i></i><i></i><i></i><span>profiles/crib.json</span></div>
+<pre>{ <span class="s">"name"</span>: <span class="s">"crib"</span>, <span class="s">"load"</span>: [<span class="s">"kym_core"</span>, <span class="s">"qaku_core"</span>], <span class="d">/* one node serves both */</span> }</pre>
+      </div>
+      <p><b>Proven:</b> kym_core + qaku_core in one daemon, exactly one Waku node started, qaku reusing kym&rsquo;s
+      already-loaded <code class="inl">delivery_module</code>. Getting it production-ready means minding a few things:</p>
+      <ul class="tight">
+        <li>Include the <b>full transitive dep set</b> in the modules dir (e.g. <code class="inl">loam_core</code> needs <code class="inl">ble_mesh</code>) — a missing dep reads as &ldquo;cannot resolve&rdquo;, not a port error.</li>
+        <li><b>Version-align</b> the shared modules — one <code class="inl">delivery_module</code> serves every tenant.</li>
+        <li>Pass the fleet <b>entryNodes</b> so the one node actually meshes; whichever core starts it first sets the config.</li>
+        <li>One node = <b>one port</b> — retire the per-app hubs rather than running them alongside.</li>
+        <li>A shared hub is a single point of failure — pair it with the <b>peerless watchdog</b>.</li>
+      </ul>
+    </section>
+
+    <section id="config">
+      <h2><span class="hash">#</span>Config</h2>
+      <ul class="tight">
+        <li><code class="inl">LOGOSCORE</code> — path to the logoscore binary (default <code class="inl">~/logoscore-new/result/bin/logoscore</code>).</li>
+        <li><code class="inl">LOGOS_HUB_STATE</code> — where per-profile config/data/logs live (default <code class="inl">~/.logos-hub</code>).</li>
+      </ul>
+      <p>Each profile runs in <code class="inl">~/.logos-hub/run/&lt;name&gt;/{cfg,data,daemon.log}</code> — fully isolated,
+      so one hub never reads another&rsquo;s registry.</p>
+      <div class="note"><b>Note</b> — the typed CLI and MCP bridge are verified working against the
+      <code class="inl">kym_core</code> + <code class="inl">qaku_core</code> set. The reflection is generic, but give a new
+      profile a quick pass with its daemon up before leaning on it in an agent loop.</div>
+    </section>
+
+    <footer>
+      logos-hub &middot; a thin, reflective layer over <code class="inl">logoscore</code>. A candidate to upstream into
+      <a href="https://github.com/logos-co">logos-co</a>. &nbsp;·&nbsp;
+      <a href="https://github.com/vpavlin/logos-hub">github.com/vpavlin/logos-hub</a>
+    </footer>
+  </main>
+</div>
+
+<script>
+  // theme toggle
+  var tb=document.getElementById('themebtn');
+  tb.onclick=function(){
+    var cur=document.documentElement.dataset.theme||(matchMedia('(prefers-color-scheme: dark)').matches?'dark':'light');
+    var next=cur==='dark'?'light':'dark';
+    document.documentElement.dataset.theme=next;
+    try{localStorage.setItem('lh-theme',next);}catch(e){}
+  };
+  // scroll-spy on the TOC
+  var links=[].slice.call(document.querySelectorAll('nav.toc a'));
+  var map={};links.forEach(function(a){map[a.getAttribute('href').slice(1)]=a;});
+  var obs=new IntersectionObserver(function(es){
+    es.forEach(function(e){
+      if(e.isIntersecting){
+        links.forEach(function(a){a.classList.remove('on');});
+        var a=map[e.target.id];if(a)a.classList.add('on');
+      }
+    });
+  },{rootMargin:'-64px 0px -70% 0px'});
+  document.querySelectorAll('main section[id]').forEach(function(s){obs.observe(s);});
+</script>
+</body>
+</html>

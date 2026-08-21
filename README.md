@@ -3,6 +3,8 @@
 Run a set of **logos-core modules** headless and drive them from a generated CLI — a thin,
 ergonomic wrapper over `logoscore` (the Logos Core daemon/client runtime).
 
+**📖 Docs:** <https://vpavlin.github.io/logos-hub/>
+
 Nothing here is app-specific: it drives **any** logos-core module — `kym_core`, `qaku_core`,
 `scala`, `loam_core`, `delivery_module`, … Loam apps are just some of the tenants. The value it
 adds over raw `logoscore`:
