@@ -1,0 +1,129 @@
+#!/usr/bin/env python3
+"""logos-hub-mcp — expose a logos-hub profile's module methods as MCP tools.
+
+Auto-generates ONE MCP tool per invokable method by reflecting the module's own API
+(`logos-hub describe <profile> <module> --json` → names + Qt types), so any MCP client
+(Claude, an agent runtime, …) can drive kym/qaku/scala/loam with typed tool-calls — no CLI
+string-mangling. Add a method to a core and it appears as a tool on the next tools/list, with
+no code change here.
+
+Usage:  logos-hub-mcp <profile>        # speaks MCP JSON-RPC 2.0 over stdio
+The profile's daemon must be up first:  logos-hub up <profile>
+
+MCP client config (e.g. claude): command "logos-hub-mcp", args ["<profile>"].
+"""
+import json, os, subprocess, sys
+from pathlib import Path
+
+HUB = os.environ.get("LOGOS_HUB", str(Path(__file__).resolve().parent / "logos-hub"))
+PROFILE = sys.argv[1] if len(sys.argv) > 1 else os.environ.get("LOGOS_HUB_PROFILE")
+
+_NUM = {"int", "qint32", "qint64", "qlonglong", "qulonglong", "uint", "uint32", "uint64",
+        "double", "float", "qreal", "long", "short"}
+_BOOL = {"bool"}
+_JSON = {"qvariantmap", "qjsonobject", "qvariantlist", "qjsonarray", "qstringlist", "qvariant"}
+
+
+def hub(*args):
+    return subprocess.run([HUB, *args], capture_output=True, text=True)
+
+
+def jsonschema_type(qtype):
+    t = (qtype or "").lower()
+    if t in _BOOL: return {"type": "boolean"}
+    if t in _NUM:  return {"type": "number"}
+    if t in _JSON: return {"type": "object"}
+    return {"type": "string"}
+
+
+def unwrap(stdout):
+    try:
+        d = json.loads(stdout); d = d.get("result", d)
+        return json.loads(d) if isinstance(d, str) else d
+    except Exception:
+        return None
+
+
+def list_modules():
+    return [m for m in hub("complete", "modules", PROFILE).stdout.split() if m]
+
+
+def module_methods(module):
+    d = unwrap(hub("describe", PROFILE, module, "--json").stdout)
+    return [m for m in d.get("methods", [])] if isinstance(d, dict) else []
+
+
+def build_tools():
+    tools = []
+    for module in list_modules():
+        for m in module_methods(module):
+            if not m.get("isInvokable", True):
+                continue
+            props, required = {}, []
+            for p in m.get("parameters", []):
+                props[p["name"]] = jsonschema_type(p.get("type"))
+                required.append(p["name"])
+            sig = ", ".join(f"{p['name']}: {p.get('type', '')}" for p in m.get("parameters", []))
+            tools.append({
+                "name": f"{module}__{m['name']}",
+                "description": f"{module}.{m['name']}({sig}) -> {m.get('returnType', 'void')}",
+                "inputSchema": {"type": "object", "properties": props, "required": required},
+            })
+    return tools
+
+
+def call_tool(name, arguments):
+    if "__" not in name:
+        raise ValueError(f"tool name must be <module>__<method>, got {name!r}")
+    module, method = name.split("__", 1)
+    flags = []
+    for k, v in (arguments or {}).items():
+        flags += [f"--{k}", v if isinstance(v, str) else json.dumps(v)]
+    r = hub("call", PROFILE, module, method, *flags)
+    return (r.stdout or r.stderr).strip()
+
+
+def send(obj):
+    sys.stdout.write(json.dumps(obj) + "\n"); sys.stdout.flush()
+
+
+def main():
+    if not PROFILE:
+        sys.stderr.write("usage: logos-hub-mcp <profile>  (and `logos-hub up <profile>` first)\n")
+        sys.exit(2)
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            msg = json.loads(line)
+        except Exception:
+            continue
+        mid, method = msg.get("id"), msg.get("method")
+        if method == "initialize":
+            send({"jsonrpc": "2.0", "id": mid, "result": {
+                "protocolVersion": "2024-11-05",
+                "capabilities": {"tools": {}},
+                "serverInfo": {"name": f"logos-hub[{PROFILE}]", "version": "0.1.0"}}})
+        elif method == "notifications/initialized":
+            pass
+        elif method == "ping":
+            send({"jsonrpc": "2.0", "id": mid, "result": {}})
+        elif method == "tools/list":
+            send({"jsonrpc": "2.0", "id": mid, "result": {"tools": build_tools()}})
+        elif method == "tools/call":
+            p = msg.get("params", {})
+            try:
+                text = call_tool(p.get("name"), p.get("arguments"))
+                send({"jsonrpc": "2.0", "id": mid,
+                      "result": {"content": [{"type": "text", "text": text}]}})
+            except Exception as e:
+                send({"jsonrpc": "2.0", "id": mid,
+                      "result": {"content": [{"type": "text", "text": f"error: {e}"}], "isError": True}})
+        elif mid is not None:
+            send({"jsonrpc": "2.0", "id": mid,
+                  "error": {"code": -32601, "message": f"method not found: {method}"}})
+
+
+if __name__ == "__main__":
+    main()

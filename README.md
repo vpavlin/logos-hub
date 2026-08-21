@@ -64,3 +64,43 @@ A profile is a JSON file under `./profiles/` (bundled) or `~/.logos-hub/profiles
 - `LOGOS_HUB_STATE` — where per-profile config/data/logs live (default `~/.logos-hub`).
 
 Each profile runs in `~/.logos-hub/run/<name>/{cfg,data,daemon.log}` — isolated per profile.
+
+## Typed CLI + completion (driven by the module's own API)
+
+`call` accepts **named `--flags`**, coerced to JSON per each parameter's Qt type read live from
+`logoscore module-info` — no hand-written JSON, and a bad flag is a clear error, not a silent
+no-op:
+
+```sh
+logos-hub describe kym kym_core            # typed signatures: createBudget --name <QString>, …
+logos-hub describe kym kym_core --json     # full machine-readable schema (params+returnType+events)
+logos-hub call kym kym_core createBudget --name Groceries
+logos-hub call kym kym_core addAccount --name Checking --type asset --balance 100
+logos-hub call kym kym_core createBudget --name X --dry-run   # show the JSON, don't invoke
+```
+
+A raw JSON positional (`call … createBudget '{"name":"X"}'`) still works. Because it all reflects
+`module-info` at runtime, adding a method to a core surfaces it automatically — nothing here changes.
+
+**Bash completion** (dynamic: subcommands → profiles → modules → methods → `--param` flags):
+
+```sh
+source <(logos-hub completions)                                     # this shell
+logos-hub completions | sudo tee /etc/bash_completion.d/logos-hub   # persistent
+```
+
+## MCP bridge — drive the hub from any agent
+
+`logos-hub-mcp <profile>` is an MCP (JSON-RPC over stdio) server that turns **every invokable
+method into an MCP tool** (`<module>__<method>`, with a JSON-schema `inputSchema` derived from the
+Qt parameter types). Any MCP client — Claude, an agent runtime — then drives kym/qaku/scala/loam
+with first-class **typed tool-calls**, no CLI string-mangling. Add a method to a core and it appears
+on the next `tools/list` with zero code change.
+
+```sh
+logos-hub up kym                 # bring the daemon up first
+logos-hub-mcp kym                # speaks MCP over stdio
+```
+
+MCP client config: command `logos-hub-mcp`, args `["kym"]`. The tool list is generated from the
+loaded modules' live schema; `tools/call` runs the method and returns its JSON result.

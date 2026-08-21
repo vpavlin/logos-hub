@@ -97,6 +97,9 @@ def cmd_logs(prof, args):
 def cmd_describe(prof, args):
     # the "generated CLI": surface a module's own API from logoscore module-info,
     # rendered as typed call signatures (the flags `call` and completion accept).
+    if getattr(args, "json", False):  # full machine-readable schema (params+returnType+events) in one call
+        r = lc(prof, "module-info", args.module, "--json")
+        return jprint(r.stdout or r.stderr)
     sc = module_schema(prof, args.module)
     if not sc:
         r = lc(prof, "module-info", args.module, "--json")
@@ -139,17 +142,25 @@ def _coerce(val, qtype):
         except Exception: die(f"value for a {qtype} param must be JSON, got: {val}")
     return val  # QString / unknown → string
 
+def _emit_call(prof, module, method, call_args, dry_run):
+    """Either show the exact logoscore invocation (--dry-run) or run it."""
+    if dry_run:
+        return jprint(json.dumps({"call": {"module": module, "method": method},
+                                  "args": [json.loads(a) if a[:1] in "[{\"" else a for a in call_args],
+                                  "logoscore": ["call", module, method, *call_args]}))
+    r = lc(prof, "call", module, method, *call_args)
+    jprint(r.stdout or r.stderr)
+
 def cmd_call(prof, args):
     raw = list(args.args)
+    dry = getattr(args, "dry_run", False)
     # Back-compat: a bare/JSON positional (not a --flag) is forwarded untouched.
     if raw and not raw[0].startswith("--"):
-        r = lc(prof, "call", args.module, args.method, *raw)
-        return jprint(r.stdout or r.stderr)
+        return _emit_call(prof, args.module, args.method, raw, dry)
     schema = module_schema(prof, args.module)
     params = schema.get(args.method)
     if params is None:  # unknown method or daemon down → forward as-is
-        r = lc(prof, "call", args.module, args.method, *raw)
-        return jprint(r.stdout or r.stderr)
+        return _emit_call(prof, args.module, args.method, raw, dry)
     ptypes = dict(params)
     provided, i = {}, 0
     while i < len(raw):
@@ -165,9 +176,7 @@ def cmd_call(prof, args):
             die(f"{args.module}.{args.method} has no --{name}. Parameters: {sig}")
         provided[name] = _coerce(val, ptypes[name]); i += 1
     obj = {n: provided[n] for n, _ in params if n in provided}
-    call_args = [json.dumps(obj)] if obj else []
-    r = lc(prof, "call", args.module, args.method, *call_args)
-    jprint(r.stdout or r.stderr)
+    _emit_call(prof, args.module, args.method, [json.dumps(obj)] if obj else [], dry)
 
 def cmd_watch(prof, args):
     # stream events — inherit stdio so it's live
@@ -284,9 +293,9 @@ def main():
                        ("ls","list loaded/available modules"),
                        ("logs","tail the daemon log")]:
         sp = sub.add_parser(name, help=help); prof_arg(sp)
-    sp = sub.add_parser("describe", help="show a module's API (methods) from module-info"); prof_arg(sp); sp.add_argument("module")
+    sp = sub.add_parser("describe", help="show a module's API (methods) from module-info"); prof_arg(sp); sp.add_argument("module"); sp.add_argument("--json", action="store_true", help="dump the full machine-readable schema (for agents/tooling)")
     sp = sub.add_parser("call", help="call a method: --name value (typed from module-info) or a raw JSON positional")
-    prof_arg(sp); sp.add_argument("module"); sp.add_argument("method"); sp.add_argument("args", nargs=argparse.REMAINDER)
+    prof_arg(sp); sp.add_argument("--dry-run", action="store_true", help="print the JSON that would be sent, don't invoke"); sp.add_argument("module"); sp.add_argument("method"); sp.add_argument("args", nargs=argparse.REMAINDER)
     sub.add_parser("completions", help="print a bash-completion script (source <(logos-hub completions))")
     sp = sub.add_parser("complete", help="(internal) candidate lists for shell completion")
     sp.add_argument("what"); sp.add_argument("rest", nargs="*")
