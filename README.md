@@ -110,17 +110,13 @@ loaded modules' live schema; `tools/call` runs the method and returns its JSON r
 ## Relationship to `logos-logoscore-py`
 
 logos-co ships [`logos-logoscore-py`](https://github.com/logos-co/logos-logoscore-py) — a Python
-client over the same `logoscore` CLI (launch / load / call / subscribe). logos-hub should build on
-it rather than re-implement the plumbing, and inherit its `logoscore → logosctl` migration. Two
-things block that today, tracked here:
+client over the same `logoscore` CLI (launch / load / call / subscribe). The generally-useful
+layers here — the **typed CLI + completion** and the **module-method MCP**, both generated from
+`module-info` — belong upstream on that client rather than in this fork. (Profiles stay local: a
+real long-running hub is managed by systemd, not brought up per-invocation, so the reflective
+CLI/MCP just **attach** to the running daemon.)
 
-1. **Not on PyPI** — `pip install logoscore` fails; it installs only from git. logos-hub is a
-   zero-dependency single file, so it can't take a git-only hard dep yet.
-2. **Process model mismatch** — its `LogoscoreClient.connect(endpoints=...)` needs explicit
-   endpoints and does not auto-attach to a running daemon by `config_dir`. logos-hub is a
-   *stateless CLI* (separate `up` and `call` invocations), so attaching would mean parsing the
-   daemon's connection files — coupling to internals.
-
-The durable fix is upstream: land logos-hub's additive layers (profiles / multi-tenant hub, the
-typed-CLI + completion from `module-info`, and the **module-method MCP**) on `logos-logoscore-py`,
-and add a `config_dir`-attach client. See the upstream proposal.
+Attaching works today with no upstream change: a `LogoscoreClient(binary, config_dir, token)` built
+against a running daemon's `<config_dir>/client/config.json` (+ token from `client/auto.json`) is a
+live client — no `connect(endpoints=...)` needed. And `pip install git+https://…` installs it fine;
+PyPI would just be polish. So the CLI + MCP are being contributed as a PR to `logos-logoscore-py`.
