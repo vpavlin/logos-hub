@@ -109,14 +109,28 @@ loaded modules' live schema; `tools/call` runs the method and returns its JSON r
 
 ## Relationship to `logos-logoscore-py`
 
-logos-co ships [`logos-logoscore-py`](https://github.com/logos-co/logos-logoscore-py) — a Python
-client over the same `logoscore` CLI (launch / load / call / subscribe). The generally-useful
-layers here — the **typed CLI + completion** and the **module-method MCP**, both generated from
-`module-info` — belong upstream on that client rather than in this fork. (Profiles stay local: a
-real long-running hub is managed by systemd, not brought up per-invocation, so the reflective
-CLI/MCP just **attach** to the running daemon.)
+logos-hub **builds on** [`logos-logoscore-py`](https://github.com/logos-co/logos-logoscore-py), the
+official Python client for `logoscore`. When it's importable, logos-hub routes its client
+operations (call / list-modules / module-info / load / status / stop) through it instead of
+re-shelling out — so it inherits that package's maintenance and its `logoscore → logosctl`
+migration. The client **attaches** to the daemon logos-hub launched, by config dir (no endpoints):
+`LogoscoreClient(binary, config_dir, token)` against the daemon's `client/config.json` (+ token from
+`client/auto.json`).
 
-Attaching works today with no upstream change: a `LogoscoreClient(binary, config_dir, token)` built
-against a running daemon's `<config_dir>/client/config.json` (+ token from `client/auto.json`) is a
-live client — no `connect(endpoints=...)` needed. And `pip install git+https://…` installs it fine;
-PyPI would just be polish. So the CLI + MCP are being contributed as a PR to `logos-logoscore-py`.
+**Install it so typed `call` is exact:**
+
+```sh
+pip install --user "git+https://github.com/logos-co/logos-logoscore-py"
+```
+
+The library sends each argument **positionally, typed** — so `call … --name X` actually sets the
+field. Without the package, logos-hub falls back to its own subprocess path, where a typed `call`
+passes a JSON object that `logoscore` may silently ignore for some methods (the exact
+silent-no-op the typed reflection is meant to kill). Everything else (up / ls / describe / down)
+works either way.
+
+The generally-useful reflective layers — the **typed CLI + completion** and the **module-method
+MCP** — are being contributed upstream so they live on `logos-logoscore-py`, not only here:
+[PR #20](https://github.com/logos-co/logos-logoscore-py/pull/20). (Profiles stay local — a real
+long-running hub is managed by systemd, so the point upstream is *attach*, not per-invocation
+bring-up.)

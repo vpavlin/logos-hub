@@ -43,7 +43,63 @@ def lc_env(prof):
             e[k] = v.replace("{data}", str(p["data"]))
     return e
 
+# ── logos-logoscore-py backend ─────────────────────────────────────────────
+# When the official client (github.com/logos-co/logos-logoscore-py) is importable,
+# route logos-hub's client operations through it instead of re-shelling out — so we
+# inherit its maintenance + `logoscore → logosctl` migration. It attaches to the
+# daemon logos-hub launched, by config dir (no endpoints). Falls back to subprocess
+# when the package isn't installed, so the single-file zero-dep path still works.
+try:
+    from logoscore import LogoscoreClient as _LClient
+    _HAVE_LIB = True
+except Exception:
+    _HAVE_LIB = False
+
+class _R:  # a subprocess.run-like result the cmd_* handlers already expect
+    def __init__(self, stdout="", stderr="", returncode=0):
+        self.stdout, self.stderr, self.returncode = stdout, stderr, returncode
+
+def _client(prof):
+    cfg = paths(prof)["cfg"]; tok = None
+    tf = cfg / "client" / "auto.json"
+    try:
+        if tf.exists(): tok = json.loads(tf.read_text()).get("token")
+    except Exception: pass
+    return _LClient(binary=LOGOSCORE, config_dir=cfg, token=tok)
+
+def _lib_lc(prof, args):
+    """Route a recognized logoscore subcommand through the py client; None if unhandled."""
+    if not args: return None
+    cmd = args[0]
+    try:
+        c = _client(prof)
+        if cmd == "status":       return _R(json.dumps(c.status()))
+        if cmd == "list-modules": return _R(json.dumps(c.list_modules(loaded=("--loaded" in args))))
+        if cmd == "module-info":  return _R(json.dumps(c.module_info(args[1])))
+        if cmd == "load-module":  return _R(json.dumps(c.load_module(args[1])))
+        if cmd == "stop":         c.stop(); return _R("{}")
+        if cmd == "call":
+            module, method, rest = args[1], args[2], list(args[3:])
+            # logos-hub's typed path passes ONE JSON object of named params; the client
+            # takes positionals, so map it back to declared order via module-info.
+            if len(rest) == 1 and rest[0].lstrip()[:1] == "{":
+                obj = json.loads(rest[0])
+                params = next((m.get("parameters", []) for m in c.module_info(module).get("methods", [])
+                               if m.get("name") == method), [])
+                rest = [obj[p["name"]] for p in params if p["name"] in obj]
+            res = c.call(module, method, *rest)
+            return _R(res if isinstance(res, str) else json.dumps(res, default=str))
+    except Exception as e:
+        return _R("", str(e), 1)
+    return None
+
 def lc(prof, *args, capture=True, check=False, env_extra=None):
+    if _HAVE_LIB and capture and not env_extra:
+        r = _lib_lc(prof, args)
+        if r is not None:
+            if check and r.returncode != 0:
+                die(f"logoscore {' '.join(args)} failed: {(r.stderr or r.stdout).strip()}")
+            return r
     e = lc_env(prof)
     if env_extra: e.update({k: str(v) for k, v in env_extra.items()})
     r = subprocess.run([LOGOSCORE, *args], env=e,
