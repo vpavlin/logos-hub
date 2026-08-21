@@ -1,0 +1,21 @@
+{
+  "name": "crib",
+  "description": "Shared multi-tenant hub PROOF: kym_core + qaku_core in ONE logoscore daemon, sharing one delivery_module node.",
+  "modulesDir": "/home/vpavlin/logos-hub/crib-modules",
+  "load": [
+    "kym_core",
+    "qaku_core"
+  ],
+  "env": {
+    "QT_QPA_PLATFORM": "offscreen",
+    "EMIT_FROM_THREAD": "1",
+    "KYM_HUB": "1",
+    "KYM_USE_CHANNELS": "1",
+    "KYM_CORE_DATA": "{data}/kym",
+    "KYM_DEVICE_ID": "crib-hub-kym",
+    "QAKU_HUB": "1",
+    "QAKU_CORE_DATA": "{data}/qaku",
+    "QAKU_DEVICE_ID": "crib-hub-qaku",
+    "KYM_DELIVERY_CFG": "{\"logLevel\": \"INFO\", \"mode\": \"Core\", \"preset\": \"logos.test\", \"relay\": true, \"entryNodes\": [\"/dns4/node-01.do-ams3.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmQ9X2xDfPG3uL77V9piYDhjq14JhKCtcmNYsTMKNqrKCj\", \"/dns4/node-02.do-ams3.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmB8NYprrfQrgWVzsJtYWkfjsXbmJEGNMG6othXsQ53BwG\", \"/dns4/node-01.gc-us-central1-a.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmF8WtwGPmeGHgYAX2277jHgy5cW9F7zsB8EqUjBZQAZQ3\", \"/dns4/node-02.gc-us-central1-a.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmUuXhUW9bdJpzN1kfDziFiUZo4bszTk66cvr7uuyCHXR7\", \"/dns4/node-01.ac-cn-hongkong-c.logos.test.status.im/tcp/30303/p2p/16Uiu2HAmL3oU95jh1BZHozn3uNhx8HEneirgr8M1jEAapzXGDqRF\", \"/dns4/node-02.ac-cn-hongkong-c.logos.test.status.im/tcp/30303/p2p/16Uiu2HAm28CoBZjpyxsanC8tQpbvZ7bZJnVYuB1EgFzb571qpWsV\"]}"
+  }
+}

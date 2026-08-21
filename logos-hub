@@ -95,14 +95,78 @@ def cmd_logs(prof, args):
     p = paths(prof); print(p["log"].read_text()[-4000:] if p["log"].exists() else "(no log yet)")
 
 def cmd_describe(prof, args):
-    # the "generated CLI": surface a module's own API from logoscore module-info
-    r = lc(prof, "module-info", args.module, "--json")
-    jprint(r.stdout or r.stderr)
+    # the "generated CLI": surface a module's own API from logoscore module-info,
+    # rendered as typed call signatures (the flags `call` and completion accept).
+    sc = module_schema(prof, args.module)
+    if not sc:
+        r = lc(prof, "module-info", args.module, "--json")
+        return jprint(r.stdout or r.stderr)
+    print(f"{args.module} — {len(sc)} methods (call: logos-hub call {args.profile} {args.module} <method> [--flags])")
+    for meth in sorted(sc):
+        flags = " ".join(f"--{n} <{t}>" for n, t in sc[meth])
+        print(f"  {meth} {flags}".rstrip())
+
+# ---- typed call: named --flags coerced per the module's own parameter types ----
+_QNUM = {"int","qint32","qint64","qlonglong","qulonglong","uint","uint32","uint64",
+         "double","float","qreal","long","short","unsigned int"}
+_QBOOL = {"bool"}
+_QJSON = {"qvariantmap","qjsonobject","qvariantlist","qjsonarray","qstringlist","qvariant"}
+
+def module_schema(prof, module):
+    """{methodName: [(paramName, qtype), ...]} straight from `logoscore module-info`."""
+    try:
+        r = lc(prof, "module-info", module, "--json")
+        d = json.loads(r.stdout); d = d.get("result", d)
+        if isinstance(d, str): d = json.loads(d)
+        out = {}
+        for m in d.get("methods", []):
+            if m.get("isInvokable", True):
+                out[m["name"]] = [(p["name"], p.get("type", "QString")) for p in m.get("parameters", [])]
+        return out
+    except Exception:
+        return {}
+
+def _coerce(val, qtype):
+    t = (qtype or "").lower()
+    if t in _QBOOL: return val.lower() in ("1", "true", "yes", "on")
+    if t in _QNUM:
+        try: return int(val)
+        except ValueError:
+            try: return float(val)
+            except ValueError: die(f"'{val}' is not a valid {qtype}")
+    if t in _QJSON:
+        try: return json.loads(val)
+        except Exception: die(f"value for a {qtype} param must be JSON, got: {val}")
+    return val  # QString / unknown → string
 
 def cmd_call(prof, args):
-    # forward to logoscore call: <module> <method> [args...]. Args are passed as-is
-    # (logoscore's call takes typed positionals); JSON args should be single-quoted at the shell.
-    r = lc(prof, "call", args.module, args.method, *args.args)
+    raw = list(args.args)
+    # Back-compat: a bare/JSON positional (not a --flag) is forwarded untouched.
+    if raw and not raw[0].startswith("--"):
+        r = lc(prof, "call", args.module, args.method, *raw)
+        return jprint(r.stdout or r.stderr)
+    schema = module_schema(prof, args.module)
+    params = schema.get(args.method)
+    if params is None:  # unknown method or daemon down → forward as-is
+        r = lc(prof, "call", args.module, args.method, *raw)
+        return jprint(r.stdout or r.stderr)
+    ptypes = dict(params)
+    provided, i = {}, 0
+    while i < len(raw):
+        tok = raw[i]
+        if not tok.startswith("--"): die(f"unexpected '{tok}' — use --name value")
+        if "=" in tok: name, val = tok[2:].split("=", 1)
+        else:
+            name = tok[2:]; i += 1
+            if i >= len(raw): die(f"--{name} needs a value")
+            val = raw[i]
+        if name not in ptypes:
+            sig = ", ".join(f"--{n} <{t}>" for n, t in params) or "(no parameters)"
+            die(f"{args.module}.{args.method} has no --{name}. Parameters: {sig}")
+        provided[name] = _coerce(val, ptypes[name]); i += 1
+    obj = {n: provided[n] for n, _ in params if n in provided}
+    call_args = [json.dumps(obj)] if obj else []
+    r = lc(prof, "call", args.module, args.method, *call_args)
     jprint(r.stdout or r.stderr)
 
 def cmd_watch(prof, args):
@@ -122,16 +186,25 @@ def cmd_telemetry(prof, args):
     if not topic.startswith("/loam-telemetry/"):
         die("could not derive the telemetry topic — is node + @noble reachable? (run the exporter from an app dir, or set NODE)")
     print(f"[telemetry] topic {topic}")
-    r = lc(prof, "call", args.module, args.subscribe, topic)
-    print(f"[telemetry] {args.module}.{args.subscribe}(topic): {'ok' if r.returncode==0 else 'FAILED ' + (r.stderr or r.stdout).strip()}")
-    watch = subprocess.Popen([LOGOSCORE, "watch", args.module], env=lc_env(prof), stdout=subprocess.PIPE)
-    exp = subprocess.Popen([node, exporter, f"--port={args.port}"], env=exp_env, stdin=watch.stdout)
-    print(f"[telemetry] exporter on :{args.port}/metrics — scrape it from Prometheus. Ctrl-C to stop.")
-    try: exp.wait()
+    lc(prof, "call", args.module, args.subscribe, topic)   # subscribe (empty return reads as error; ignore)
+    print(f"[telemetry] {args.module}.{args.subscribe}(topic) sent")
+    # PULL, not watch: poll a drainable receive log via `call` — the headless-hub event stream to
+    # loam_core isn't observable, but a plain `call` is. Each poll's frames feed the exporter's stdin.
+    exp = subprocess.Popen([node, exporter, f"--port={args.port}"], env=exp_env, stdin=subprocess.PIPE, text=True)
+    print(f"[telemetry] exporter on :{args.port}/metrics — polling {args.module}.{args.collect} every {args.interval}s. Ctrl-C to stop.")
+    try:
+        while True:
+            r = lc(prof, "call", args.module, args.collect)
+            out = (r.stdout or "").strip()
+            if out and out not in ("[]", "null", ""):
+                try: exp.stdin.write(out + "\n"); exp.stdin.flush()
+                except Exception: break
+            time.sleep(args.interval)
+    except KeyboardInterrupt:
+        pass
     finally:
-        for p in (watch, exp):
-            try: p.terminate()
-            except Exception: pass
+        try: exp.terminate()
+        except Exception: pass
 
 def cmd_profiles(_prof, _args):
     seen = set()
@@ -145,6 +218,62 @@ def cmd_profiles(_prof, _args):
                     print(f"  {f.stem:16} {desc}")
     if not seen: print("  (no profiles; add one under ./profiles or ~/.logos-hub/profiles)")
 
+SUBCOMMANDS = ["up", "down", "status", "ls", "logs", "describe", "call", "watch",
+               "telemetry", "profiles", "completions"]
+
+def _profile_names():
+    names = set()
+    for d in PROFILE_DIRS:
+        if d.exists():
+            for f in d.glob("*.json"): names.add(f.stem)
+    return sorted(names)
+
+def cmd_complete(_prof, a):
+    """Machine-readable candidate lists for the bash-completion function (one per line)."""
+    what, rest = a.what, list(a.rest)
+    if what == "subcommands": return print("\n".join(SUBCOMMANDS))
+    if what == "profiles":    return print("\n".join(_profile_names()))
+    if not rest: return
+    prof = find_profile(rest[0])
+    if what == "modules":
+        try:
+            d = json.loads(lc(prof, "list-modules", "--json").stdout)
+            return print("\n".join(m["name"] for m in d))
+        except Exception:
+            return print("\n".join(prof.get("load", [])))
+    if what == "methods" and len(rest) >= 2:
+        return print("\n".join(sorted(module_schema(prof, rest[1]).keys())))
+    if what == "params" and len(rest) >= 3:
+        sc = module_schema(prof, rest[1]).get(rest[2], [])
+        return print("\n".join(f"--{n}" for n, _ in sc))
+
+def cmd_completions(_prof, _a):
+    """Print a bash-completion script. Install: `logos-hub completions > /etc/bash_completion.d/logos-hub`
+    or `source <(logos-hub completions)`."""
+    print(r'''# bash completion for logos-hub — dynamic, driven by `logos-hub complete ...`
+_logos_hub() {
+  local cur prev cword words hub sub
+  cur="${COMP_WORDS[COMP_CWORD]}"; cword=$COMP_CWORD; words=("${COMP_WORDS[@]}"); hub="${words[0]}"
+  if [ "$cword" -eq 1 ]; then
+    COMPREPLY=($(compgen -W "$("$hub" complete subcommands 2>/dev/null)" -- "$cur")); return
+  fi
+  sub="${words[1]}"
+  case "$sub" in
+    up|down|status|ls|logs|describe|watch|call|telemetry)
+      [ "$cword" -eq 2 ] && { COMPREPLY=($(compgen -W "$("$hub" complete profiles 2>/dev/null)" -- "$cur")); return; } ;;
+  esac
+  case "$sub" in
+    describe|watch)
+      [ "$cword" -eq 3 ] && { COMPREPLY=($(compgen -W "$("$hub" complete modules "${words[2]}" 2>/dev/null)" -- "$cur")); return; } ;;
+    call)
+      local pf="${words[2]}" mod="${words[3]}" meth="${words[4]}"
+      [ "$cword" -eq 3 ] && { COMPREPLY=($(compgen -W "$("$hub" complete modules "$pf" 2>/dev/null)" -- "$cur")); return; }
+      [ "$cword" -eq 4 ] && { COMPREPLY=($(compgen -W "$("$hub" complete methods "$pf" "$mod" 2>/dev/null)" -- "$cur")); return; }
+      [ "$cword" -ge 5 ] && { COMPREPLY=($(compgen -W "$("$hub" complete params "$pf" "$mod" "$meth" 2>/dev/null)" -- "$cur")); return; } ;;
+  esac
+}
+complete -F _logos_hub logos-hub''')
+
 def main():
     ap = argparse.ArgumentParser(prog="logos-hub", description=__doc__.splitlines()[0])
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -156,18 +285,26 @@ def main():
                        ("logs","tail the daemon log")]:
         sp = sub.add_parser(name, help=help); prof_arg(sp)
     sp = sub.add_parser("describe", help="show a module's API (methods) from module-info"); prof_arg(sp); sp.add_argument("module")
-    sp = sub.add_parser("call", help="call a module method"); prof_arg(sp); sp.add_argument("module"); sp.add_argument("method"); sp.add_argument("args", nargs="*")
+    sp = sub.add_parser("call", help="call a method: --name value (typed from module-info) or a raw JSON positional")
+    prof_arg(sp); sp.add_argument("module"); sp.add_argument("method"); sp.add_argument("args", nargs=argparse.REMAINDER)
+    sub.add_parser("completions", help="print a bash-completion script (source <(logos-hub completions))")
+    sp = sub.add_parser("complete", help="(internal) candidate lists for shell completion")
+    sp.add_argument("what"); sp.add_argument("rest", nargs="*")
     sp = sub.add_parser("watch", help="stream a module's events"); prof_arg(sp); sp.add_argument("module")
     sp = sub.add_parser("telemetry", help="subscribe the telemetry topic → serve Prometheus /metrics"); prof_arg(sp)
     sp.add_argument("--secret", help="pre-shared loam-telemetry secret (or TELEMETRY_SECRET env)")
     sp.add_argument("--exporter", help="path to loam-telemetry-exporter.mjs (or LOAM_TELEMETRY_EXPORTER env)")
     sp.add_argument("--module", default="loam_core", help="delivery-capable module that receives telemetry (default: loam_core)")
     sp.add_argument("--subscribe", default="join", help="subscribe method on the module (loam_core: join; delivery_module: subscribe)")
+    sp.add_argument("--collect", default="recentReceived", help="drainable receive-log method to poll (loam_core: recentReceived)")
+    sp.add_argument("--interval", type=float, default=5, help="seconds between recentReceived polls (default 5)")
     sp.add_argument("--port", type=int, default=9109, help="Prometheus /metrics port (default 9109)")
     sub.add_parser("profiles", help="list available profiles")
     a = ap.parse_args()
 
     if a.cmd == "profiles": return cmd_profiles(None, a)
+    if a.cmd == "completions": return cmd_completions(None, a)
+    if a.cmd == "complete": return cmd_complete(None, a)
     prof = find_profile(a.profile)
     {"up":cmd_up,"down":cmd_down,"status":cmd_status,"ls":cmd_ls,"logs":cmd_logs,
      "describe":cmd_describe,"call":cmd_call,"watch":cmd_watch,"telemetry":cmd_telemetry}[a.cmd](prof, a)
