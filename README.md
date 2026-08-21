@@ -106,3 +106,21 @@ logos-hub-mcp kym                # speaks MCP over stdio
 
 MCP client config: command `logos-hub-mcp`, args `["kym"]`. The tool list is generated from the
 loaded modules' live schema; `tools/call` runs the method and returns its JSON result.
+
+## Relationship to `logos-logoscore-py`
+
+logos-co ships [`logos-logoscore-py`](https://github.com/logos-co/logos-logoscore-py) — a Python
+client over the same `logoscore` CLI (launch / load / call / subscribe). logos-hub should build on
+it rather than re-implement the plumbing, and inherit its `logoscore → logosctl` migration. Two
+things block that today, tracked here:
+
+1. **Not on PyPI** — `pip install logoscore` fails; it installs only from git. logos-hub is a
+   zero-dependency single file, so it can't take a git-only hard dep yet.
+2. **Process model mismatch** — its `LogoscoreClient.connect(endpoints=...)` needs explicit
+   endpoints and does not auto-attach to a running daemon by `config_dir`. logos-hub is a
+   *stateless CLI* (separate `up` and `call` invocations), so attaching would mean parsing the
+   daemon's connection files — coupling to internals.
+
+The durable fix is upstream: land logos-hub's additive layers (profiles / multi-tenant hub, the
+typed-CLI + completion from `module-info`, and the **module-method MCP**) on `logos-logoscore-py`,
+and add a `config_dir`-attach client. See the upstream proposal.
