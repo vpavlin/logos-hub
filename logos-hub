@@ -231,8 +231,18 @@ def cmd_call(prof, args):
             sig = ", ".join(f"--{n} <{t}>" for n, t in params) or "(no parameters)"
             die(f"{args.module}.{args.method} has no --{name}. Parameters: {sig}")
         provided[name] = _coerce(val, ptypes[name]); i += 1
-    obj = {n: provided[n] for n, _ in params if n in provided}
-    _emit_call(prof, args.module, args.method, [json.dumps(obj)] if obj else [], dry)
+    # This logoscore's `call` binds args POSITIONALLY, in declared param order (it does
+    # NOT parse --flags, and a single JSON object is seen as one arg → METHOD_FAILED for
+    # any multi-arg method). Emit the coerced values as bare positionals up to the last
+    # one provided, filling any interior gap with "" (a trailing gap = the param's default).
+    def _posval(v):
+        if isinstance(v, bool):         return "true" if v else "false"
+        if isinstance(v, (dict, list)): return json.dumps(v)
+        return str(v)
+    order = [n for n, _ in params]
+    last = max((order.index(n) for n in provided), default=-1)
+    call_args = [_posval(provided[n]) if n in provided else "" for n in order[:last + 1]]
+    _emit_call(prof, args.module, args.method, call_args, dry)
 
 def cmd_watch(prof, args):
     # stream events — inherit stdio so it's live
